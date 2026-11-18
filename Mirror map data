@@ -1,0 +1,44 @@
+# Mirror the OpenStreetMap extracts Throughline: Southern Ontario needs into this repository's releases.
+# Data © OpenStreetMap contributors, Open Database License (ODbL) 1.0. https://www.openstreetmap.org/copyright
+name: Mirror map data
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 1 * *" # refresh on the first of every month
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Download from Geofabrik and check against Geofabrik's own checksums
+        run: |
+          set -e
+          mkdir out && cd out
+          base=https://download.geofabrik.de/north-america
+          for f in canada/ontario-latest.osm.pbf us/michigan-latest.osm.pbf; do
+            curl -fL --retry 5 --retry-delay 20 -o "$(basename $f)" "$base/$f"
+            curl -fL --retry 5 -o "$(basename $f).md5" "$base/$f.md5"
+          done
+          md5sum -c *.md5
+          ls -l
+
+      - name: Census 2021 population by census subdivision (best effort)
+        continue-on-error: true
+        run: |
+          cd out
+          curl -fL --retry 3 -o census2021-csd-population.csv \
+            "https://www12.statcan.gc.ca/census-recensement/2021/dp-pd/hlt-fst/pd-pl/Tables/CompFile.cfm?Lang=Eng&T=301&OFT=CSV"
+          head -c 400 census2021-csd-population.csv
+
+      - name: Publish as the "map-data" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete map-data --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+          gh release create map-data out/* --repo "$GITHUB_REPOSITORY" --title "Map data $(date -u +%F)" \
+            --notes "OpenStreetMap extracts mirrored unchanged from Geofabrik, checked against their published MD5. © OpenStreetMap contributors, ODbL 1.0."
